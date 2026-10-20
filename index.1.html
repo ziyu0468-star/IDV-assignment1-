@@ -1,0 +1,135 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pollutant Standards Index · Singapore</title>
+  <style>
+    :root{--green:#278d16;--green-dark:#18720d;--green-light:#c9efc8;--green-line:#529851;--ink:#17351b}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:#b9e6b6;color:var(--ink);font-family:Arial,Helvetica,sans-serif}
+    .page{width:min(1100px,92%);margin:0 auto;padding:70px 0 48px;text-align:center}
+    h1{font-size:clamp(30px,4vw,48px);margin:0 0 10px;font-weight:700;letter-spacing:-1.2px}
+    h2{font-size:27px;margin:0 0 12px}
+    .status{font-size:20px;font-weight:700;margin:0 0 30px;color:#236f1b}
+    .table-shell{overflow-x:auto;box-shadow:0 2px 8px #376f3630}
+    table{width:100%;border-collapse:collapse;min-width:720px;text-align:left;background:#c5edc2}
+    thead{background:var(--green);color:#133d0e}
+    th,td{border:2px solid var(--green-line);padding:11px 14px}
+    th{font-size:17px;font-weight:700;text-transform:lowercase}
+    th:first-child,td:first-child{width:42%;text-align:left}
+    th:not(:first-child),td:not(:first-child){text-align:center}
+    tbody tr:nth-child(even){background:#bce8b9}
+    td{font-size:16px;font-weight:600}
+    td:first-child{font-weight:600}
+    .actions{margin:21px 0}
+    button{border:2px solid #478a43;background:#87ce7c;color:#194619;padding:9px 20px;font-size:15px;font-weight:700;cursor:pointer;border-radius:3px}
+    button:hover{background:#9cdd92}
+    button:focus-visible{outline:3px solid #174c17;outline-offset:3px}
+    .updated{font-size:14px;font-weight:700;margin:22px 0 5px}
+    .credit{font-size:14px;margin:0}.credit a{color:#273fbd;text-decoration:underline}
+    .note{font-size:12px;color:#3f6340;margin-top:12px}
+    @media(max-width:600px){.page{padding-top:38px}h1{font-size:32px}.status{font-size:17px}th,td{padding:9px 10px}}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Pollutant Standards Index</h1>
+    <h2>Singapore</h2>
+    <p class="status" id="airStatus">Status: Loading…</p>
+
+    <div class="table-shell">
+      <table aria-label="Pollutant Standards Index readings by Singapore region">
+        <thead><tr><th>Metric</th><th>central</th><th>west</th><th>east</th><th>north</th><th>south</th></tr></thead>
+        <tbody id="readings"></tbody>
+      </table>
+    </div>
+
+    <div class="actions"><button id="refresh" type="button">Refresh</button></div>
+    <p class="updated" id="updated">Waiting for live PSI data…</p>
+    <p class="credit">Data format based on <a href="https://data.gov.sg/">Singapore Government Agency</a> PSI fields</p>
+    <p class="note" id="notice" role="status">Loading the latest PSI readings from data.gov.sg…</p>
+  </main>
+  <script>
+    const API_URL = 'https://api-open.data.gov.sg/v2/real-time/api/psi';
+    const regionOrder = ['central', 'west', 'east', 'north', 'south'];
+    const metrics = [
+      ['o3_sub_index', 'Ozone · sub-index'],
+      ['pm10_twenty_four_hourly', 'PM₁₀ · 24-hour'],
+      ['pm10_sub_index', 'PM₁₀ · sub-index'],
+      ['co_sub_index', 'CO · sub-index'],
+      ['pm25_twenty_four_hourly', 'PM₂.₅ · 24-hour'],
+      ['so2_sub_index', 'SO₂ · sub-index'],
+      ['co_eight_hour_max', 'CO · 8-hour maximum'],
+      ['no2_one_hour_max', 'NO₂ · 1-hour maximum'],
+      ['so2_twenty_four_hourly', 'SO₂ · 24-hour'],
+      ['pm25_sub_index', 'PM₂.₅ · sub-index'],
+      ['psi_twenty_four_hourly', 'PSI · 24-hour'],
+      ['o3_eight_hour_max', 'O₃ · 8-hour maximum']
+    ];
+    const tableBody = document.getElementById('readings');
+    const refreshButton = document.getElementById('refresh');
+    const notice = document.getElementById('notice');
+    let lastReadings = null;
+
+    function formatTimestamp(value) {
+      if (!value) return 'Update time unavailable';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : `Updated at ${date.toLocaleString('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' })} (Singapore time)`;
+    }
+
+    function psiStatus(readings) {
+      const values = Object.values(readings?.psi_twenty_four_hourly || {}).filter(Number.isFinite);
+      if (!values.length) return 'Status: unavailable';
+      const max = Math.max(...values);
+      if (max <= 50) return 'Status: Good';
+      if (max <= 100) return 'Status: Moderate';
+      if (max <= 200) return 'Status: Unhealthy';
+      if (max <= 300) return 'Status: Very Unhealthy';
+      return 'Status: Hazardous';
+    }
+
+    function renderTable(readings) {
+      tableBody.innerHTML = metrics.map(([key, label]) => {
+        const values = readings[key];
+        return `<tr><td>${label}<div style="font-size:11px;font-weight:400;opacity:.75">${key}</div></td>${regionOrder.map(region => `<td>${Number.isFinite(values?.[region]) ? values[region] : '—'}</td>`).join('')}</tr>`;
+      }).join('');
+    }
+
+    async function refreshData() {
+      refreshButton.disabled = true;
+      refreshButton.textContent = 'Loading…';
+      notice.textContent = 'Requesting the latest readings from data.gov.sg…';
+      try {
+        const response = await fetch(API_URL, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        const item = result?.data?.items?.[0];
+        if (result.code !== 0 || !item?.readings) throw new Error(result.errorMsg || 'No PSI readings were returned');
+        lastReadings = item.readings;
+        renderTable(lastReadings);
+        document.getElementById('airStatus').textContent = psiStatus(lastReadings);
+        document.getElementById('updated').textContent = formatTimestamp(item.updatedTimestamp || item.timestamp);
+        notice.textContent = 'Live data loaded from Singapore’s data.gov.sg PSI API. The page also checks for updates every 5 minutes.';
+      } catch (error) {
+        console.error('Unable to load PSI data:', error);
+        notice.textContent = lastReadings
+          ? 'Could not refresh; showing the last successfully loaded readings. Check your connection and try again.'
+          : 'Could not load live readings. Check your internet connection, then press Refresh to try again.';
+        if (!lastReadings) {
+          tableBody.innerHTML = `<tr><td colspan="6">Live PSI data could not be loaded.</td></tr>`;
+          document.getElementById('airStatus').textContent = 'Status: unavailable';
+        }
+      } finally {
+        refreshButton.disabled = false;
+        refreshButton.textContent = 'Refresh';
+      }
+    }
+
+    refreshButton.addEventListener('click', refreshData);
+    refreshData();
+    window.setInterval(refreshData, 5 * 60 * 1000);
+  </script>
+</body>
+</html>
+
